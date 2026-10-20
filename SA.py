@@ -1,3 +1,4 @@
+import base64
 import contextlib
 import json
 import os
@@ -15,6 +16,13 @@ from googleapiclient.errors import HttpError
 
 AUTH_DIR = Path(__file__).resolve().parent / "authentication"
 CREDENTIALS_PATH = AUTH_DIR / "credentials.json"
+
+# Google adds the "openid" scope on its own whenever a userinfo scope is
+# requested, so the granted scope set never matches the requested one
+# exactly. oauthlib treats that as a fatal error, which would abort the flow
+# right after the consent succeeded and lose the token. This is oauthlib's
+# own switch for exactly that case.
+os.environ.setdefault("OAUTHLIB_RELAX_TOKEN_SCOPE", "1")
 
 USERINFO_URL = "https://openidconnect.googleapis.com/v1/userinfo"
 
@@ -231,6 +239,10 @@ class ServiceAuth:
         google-auth happily loads a token regardless of the scopes it was
         granted, so without this check an old, wider grant (for example
         "https://mail.google.com/") would keep being used.
+
+        The grant has to cover every scope we ask for, and it must not be
+        wider than that. The one exception is "openid", which Google adds by
+        itself when a userinfo scope is requested.
         """
         granted = self._stored_grant()
         if granted is None:
@@ -238,7 +250,9 @@ class ServiceAuth:
             return True
 
         wanted = {scope.rstrip("/") for scope in self.SCOPES}
-        return granted == wanted
+        allowed = wanted | {"openid"}
+
+        return wanted.issubset(granted) and granted.issubset(allowed)
 
     @staticmethod
     def _stored_grant():
@@ -316,9 +330,34 @@ class ServiceAuth:
         """Best effort lookup of the signed-in account's own address."""
         try:
             creds = self.get_credentials()
+        except Exception:
+            return None
+
+        # The id_token that comes with the grant already carries the address,
+        # so this usually needs no request at all.
+        address = self._email_from_id_token(creds)
+        if address:
+            return address
+
+        try:
             session = AuthorizedSession(creds)
             response = session.get(USERINFO_URL, timeout=10)
             response.raise_for_status()
             return response.json().get("email")
+        except Exception:
+            return None
+
+    @staticmethod
+    def _email_from_id_token(creds):
+        """Pull the email claim out of the id_token, if there is one."""
+        id_token = getattr(creds, "id_token", None)
+        if not id_token:
+            return None
+
+        try:
+            payload = id_token.split(".")[1]
+            payload += "=" * (-len(payload) % 4)
+            claims = json.loads(base64.urlsafe_b64decode(payload))
+            return claims.get("email")
         except Exception:
             return None
