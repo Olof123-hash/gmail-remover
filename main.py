@@ -227,7 +227,7 @@ def main():
                       choices= ['Delete Emails', 'Block Accounts']),
     ]
 
-    actions[ask(prompt)['options']()]
+    actions[ask(prompt)['options']]()
 
 
 def run():
