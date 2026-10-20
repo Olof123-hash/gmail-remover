@@ -4,7 +4,7 @@ from inquirer.errors import ValidationError
 
 from functionality.block import block_user, is_valid_email, show_blocked, unblock_user
 from functionality.deletemails import delete_mail
-from SA import MissingCredentialsError
+from SA import CREDENTIALS_PATH, TOKEN_PATH, MissingCredentialsError, ServiceAuth
 
 
 print(r""" ___  _        __ _ ____  _____
@@ -168,6 +168,58 @@ actions = {
 }
 
 
+def show_status():
+    """Print where the app keeps its state and whether it is still usable."""
+    print(f"OAuth client : {CREDENTIALS_PATH}")
+    if CREDENTIALS_PATH.exists():
+        print("               present")
+    else:
+        print("               MISSING - see the README for how to create one")
+
+    print()
+    print(f"Token        : {TOKEN_PATH}")
+
+    auth = ServiceAuth()
+
+    if not TOKEN_PATH.exists():
+        print("               no token yet, the next run will ask for consent")
+        return
+
+    try:
+        creds = auth.get_credentials()
+    except Exception as err:
+        print(f"               not usable: {err}")
+        return
+
+    print("               usable")
+    print(f"               account : {auth.get_user_email()}")
+    print(f"               expires : {creds.expiry}")
+    print("               scopes  :")
+    for scope in creds.scopes or []:
+        print(f"                 {scope}")
+
+
+def reauthorize():
+    """Throw the stored grant away and ask for a new consent."""
+    auth = ServiceAuth()
+    auth.invalidate_token()
+    print("The stored grant was removed.")
+    print("A browser window will open, approve the request and you are done.")
+    auth.get_credentials()
+    print(f"New grant saved to {TOKEN_PATH}")
+
+
+def show_help():
+    print("""
+gmail-remover
+
+  python main.py            run the interactive menu
+  python main.py --status   show where the setup lives and whether it works
+  python main.py --reauth   drop the stored grant and consent again
+  python main.py --help     this text
+""")
+
+
 def main():
     prompt = [
         inquirer.List('options',
@@ -175,12 +227,30 @@ def main():
                       choices= ['Delete Emails', 'Block Accounts']),
     ]
 
-    actions[ask(prompt)['options']]()
+    actions[ask(prompt)['options']()]
+
+
+def run():
+    argv = sys.argv[1:]
+
+    if "--help" in argv or "-h" in argv:
+        show_help()
+        return
+
+    if "--status" in argv or "-s" in argv:
+        show_status()
+        return
+
+    if "--reauth" in argv or "-r" in argv:
+        reauthorize()
+        return
+
+    main()
 
 
 if __name__ == "__main__":
     try:
-        main()
+        run()
     except KeyboardInterrupt:
         print()
         sys.exit()

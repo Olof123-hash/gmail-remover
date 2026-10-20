@@ -93,6 +93,32 @@ typed.
 Creates a Gmail filter with the action *move to trash*, and records the
 address in `blocked.json`. The same list is used to unblock accounts again.
 
+### Other commands
+
+| Command | What it does |
+|---|---|
+| `python main.py --status` | show where the setup lives, which account is connected and whether the grant still works |
+| `python main.py --reauth` | throw the stored grant away and consent again |
+| `python main.py --help` | list the commands |
+
+## Keeping your setup
+
+Nothing is lost when you shut the computer down. The pieces are:
+
+| Piece | Where | Survives a reboot |
+|---|---|---|
+| OAuth client | `authentication/credentials.json` | yes, and it syncs with the project folder |
+| Token | `%LOCALAPPDATA%\gmail-remover\token.json` | yes, it is a plain file on disk |
+| Blocked list | `blocked.json` | yes, in the project folder |
+
+The token is deliberately **not** in the project folder, so that a project in
+a cloud synced folder does not upload your mailbox token to the cloud. Set
+`GMAIL_REMOVER_TOKEN_DIR` to keep it somewhere else.
+
+> **If the grant stops working**, run `python main.py --reauth` and approve
+> the request again. That is also the fix if you ever publish the app and
+> Google decides the grant needs renewing.
+
 ## Files
 
 | File | Purpose |
@@ -112,7 +138,10 @@ address in `blocked.json`. The same list is used to unblock accounts again.
 - The token is stored outside the project folder so that a cloud synced
   project does not sync your mailbox token. Set `GMAIL_REMOVER_TOKEN_DIR` to
   put it somewhere else.
-- If you change the scopes in `SA.py`, delete the token file and consent
-  again.
+- If you change the scopes in `SA.py`, run `python main.py --reauth` to
+  consent again.
 - Revoke the access at
   <https://myaccount.google.com/connections> if you ever want to cut it off.
+- A refresh token also stops working if the OAuth consent screen is left in
+  the **Testing** publishing status, because Google expires those after
+  seven days. Switching the consent screen to **In production** avoids it.
