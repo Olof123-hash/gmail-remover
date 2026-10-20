@@ -143,7 +143,27 @@ class ServiceAuth:
             )
 
         try:
-            flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_PATH, self.SCOPES)
+            # "utf-8-sig" reads the file whether or not it carries a byte
+            # order mark. Windows editors add one by default, and the
+            # stock loader would choke on it.
+            with CREDENTIALS_PATH.open("r", encoding="utf-8-sig") as f:
+                client_config = json.load(f)
+        except (json.JSONDecodeError, OSError, UnicodeDecodeError) as err:
+            raise InvalidCredentialsError(
+                f"{CREDENTIALS_PATH} could not be read as JSON ({err}).\n"
+                "It has to be the JSON downloaded for a Desktop app OAuth client."
+            ) from err
+
+        if "installed" not in client_config:
+            raise InvalidCredentialsError(
+                f"{CREDENTIALS_PATH} is not a Desktop app OAuth client.\n"
+                'The file needs an "installed" section, which is what you get '
+                'when the OAuth client is created with the application type '
+                '"Desktop app".'
+            )
+
+        try:
+            flow = InstalledAppFlow.from_client_config(client_config, self.SCOPES)
         except ValueError as err:
             raise InvalidCredentialsError(
                 f"{CREDENTIALS_PATH} does not look like a usable OAuth client file ({err}).\n"

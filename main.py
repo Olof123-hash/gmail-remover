@@ -116,6 +116,7 @@ def delete():
         sys.exit()
 # %%
 
+
 def block_accounts():
 
     option = [
