@@ -13,10 +13,36 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 
 AUTH_DIR = Path(__file__).resolve().parent / "authentication"
-TOKEN_PATH = AUTH_DIR / "token.json"
 CREDENTIALS_PATH = AUTH_DIR / "credentials.json"
 
 USERINFO_URL = "https://openidconnect.googleapis.com/v1/userinfo"
+
+
+def _token_dir():
+    """
+    Return the directory the token is stored in.
+
+    The token deliberately does not live in the project folder. The project
+    usually sits in a cloud synced folder (OneDrive, Dropbox, ...) and a
+    synced token is a token in somebody else's cloud. It also keeps the
+    token out of the way of the sync client, which fights with the
+    permission changes made to it.
+
+    Set GMAIL_REMOVER_TOKEN_DIR to override the location.
+    """
+    override = os.environ.get("GMAIL_REMOVER_TOKEN_DIR")
+    if override:
+        return Path(override).expanduser()
+
+    if os.name == "nt":
+        base = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
+    else:
+        base = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
+
+    return Path(base) / "gmail-remover"
+
+
+TOKEN_PATH = _token_dir() / "token.json"
 
 CREDENTIALS_HELP = """Could not find {path}
 
@@ -131,7 +157,12 @@ class ServiceAuth:
             else:
                 creds = self._run_consent_flow()
 
-            self.save_token(creds)
+            try:
+                self.save_token(creds)
+            except OSError as err:
+                # Not fatal for this run, but the next one will have to ask
+                # for consent again, so make the reason visible.
+                print(f"Warning: could not save the token to {TOKEN_PATH}: {err}")
 
         return creds
 
@@ -214,10 +245,11 @@ class ServiceAuth:
         readable by anyone else, and a crash halfway through must not leave a
         half-written file behind.
         """
-        AUTH_DIR.mkdir(parents=True, exist_ok=True)
-        _restrict_to_current_user(AUTH_DIR, directory=True)
+        token_dir = TOKEN_PATH.parent
+        token_dir.mkdir(parents=True, exist_ok=True)
+        _restrict_to_current_user(token_dir, directory=True)
 
-        fd, tmp_path = tempfile.mkstemp(dir=str(AUTH_DIR), prefix=".token-", suffix=".tmp")
+        fd, tmp_path = tempfile.mkstemp(dir=str(token_dir), prefix=".token-", suffix=".tmp")
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as token:
                 token.write(creds.to_json())

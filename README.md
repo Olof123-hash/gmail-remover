@@ -61,9 +61,12 @@ The first run opens a browser and asks you to consent. The app only asks for:
 | `gmail.modify` | move messages to the trash |
 | `userinfo.email` | read your own address, so you cannot block yourself by accident |
 
-After you consent, the token is stored in `authentication/token.json` and is
-restricted to your own user account. You will not be asked again until the
-grant is revoked or the scopes change.
+After you consent, the token is stored **outside the project folder** (in
+`%LOCALAPPDATA%\gmail-remover\` on Windows) and is restricted to your own user
+account. It is kept out of the project on purpose, so that a project living
+in a cloud synced folder does not end up with your mailbox token in somebody
+else's cloud. You will not be asked again until the grant is revoked or the
+scopes change.
 
 > If your consent screen is in the **Testing** publishing status, Google only
 > lets you (and any test users you add) grant access. That is fine for
@@ -100,13 +103,16 @@ address in `blocked.json`. The same list is used to unblock accounts again.
 | `functionality/block.py` | creating, listing and removing filters |
 | `blocked.json` | your local list of blocked addresses (created on first use) |
 | `authentication/credentials.json` | your OAuth client, not in version control |
-| `authentication/token.json` | your token, not in version control |
+| `%LOCALAPPDATA%\gmail-remover\token.json` | your token, kept out of the project folder |
 
 ## Security notes
 
 - The token file is written atomically and is only readable by the user
   running the program.
-- If you change the scopes in `SA.py`, delete `authentication/token.json` and
-  consent again.
+- The token is stored outside the project folder so that a cloud synced
+  project does not sync your mailbox token. Set `GMAIL_REMOVER_TOKEN_DIR` to
+  put it somewhere else.
+- If you change the scopes in `SA.py`, delete the token file and consent
+  again.
 - Revoke the access at
   <https://myaccount.google.com/connections> if you ever want to cut it off.

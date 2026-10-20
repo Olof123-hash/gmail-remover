@@ -2,7 +2,7 @@ import time
 
 from googleapiclient.errors import HttpError
 
-from SA import MissingCredentialsError, ServiceAuth
+from SA import TOKEN_PATH, MissingCredentialsError, ServiceAuth
 
 BATCH_SIZE = 1000        # messages.batchModify accepts at most 1000 ids per call
 MAX_ATTEMPTS = 5
@@ -109,6 +109,7 @@ def delete_mail(senders, amount=None):
         return 0
     except Exception as err:
         print(f"Could not authenticate with Gmail: {err}")
+        print(f"The token is stored at {TOKEN_PATH}")
         return 0
 
     ids = collect_message_ids(service, query, amount)
