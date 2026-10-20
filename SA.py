@@ -6,6 +6,7 @@ import sys
 import tempfile
 from pathlib import Path
 
+from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import AuthorizedSession, Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -94,14 +95,27 @@ class ServiceAuth:
 
         if not creds or not creds.valid:
             if creds and creds.expired and creds.refresh_token:
-                creds.refresh(Request())
+                try:
+                    # Silent refresh. The browser is not needed here, the
+                    # long lived refresh token is exchanged for a new access
+                    # token over a plain request.
+                    creds.refresh(Request())
+                except RefreshError:
+                    # The refresh token was revoked or has expired, so the
+                    # only way forward is a new consent.
+                    print("The saved grant is no longer valid, requesting new consent...")
+                    creds = self._run_consent_flow()
             else:
-                flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_PATH, self.SCOPES)
-                creds = flow.run_local_server(port=0, access_type="offline", prompt="consent")
+                creds = self._run_consent_flow()
 
             self.save_token(creds)
 
         return creds
+
+    def _run_consent_flow(self):
+        """Run the interactive OAuth flow and return fresh credentials."""
+        flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_PATH, self.SCOPES)
+        return flow.run_local_server(port=0, access_type="offline", prompt="consent")
 
     def _grant_is_current(self):
         """
