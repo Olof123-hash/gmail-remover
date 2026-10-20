@@ -134,13 +134,13 @@ class ServiceAuth:
     ]
 
     def __init__(self):
-        # Set when a consent flow ran, so we never ask twice in a row.
-        self.consented = False
+        # Counts how many consent flows have run, so we never ask twice for
+        # the same problem.
+        self.consent_count = 0
 
     def get_credentials(self):
         """Return valid credentials, running the OAuth flow when needed."""
         creds = None
-        self.consented = False
 
         if TOKEN_PATH.exists():
             if self._grant_is_current():
@@ -154,7 +154,7 @@ class ServiceAuth:
                 # The stored token was granted for a different set of scopes
                 # (usually a wider one). It can no longer be used, so drop it
                 # and ask the user to consent again with the current scopes.
-                print("Stored token has outdated scopes, requesting new consent...")
+                print("The stored grant has outdated scopes, asking for consent again...")
                 creds = None
 
         if not creds or not creds.valid:
@@ -167,17 +167,22 @@ class ServiceAuth:
                 except RefreshError:
                     # The refresh token was revoked or has expired, so the
                     # only way forward is a new consent.
-                    print("The saved grant is no longer valid, requesting new consent...")
+                    print("The stored grant is no longer valid, asking for consent again...")
                     creds = self._run_consent_flow()
             else:
+                if creds is None and TOKEN_PATH.exists():
+                    print("The stored grant could not be used, asking for consent again...")
+                else:
+                    print("No stored grant found, asking for consent...")
                 creds = self._run_consent_flow()
 
             try:
                 self.save_token(creds)
+                print(f"Grant saved to {TOKEN_PATH}")
             except OSError as err:
                 # Not fatal for this run, but the next one will have to ask
                 # for consent again, so make the reason visible.
-                print(f"Warning: could not save the token to {TOKEN_PATH}: {err}")
+                print(f"Warning: could not save the grant to {TOKEN_PATH}: {err}")
 
         return creds
 
@@ -217,7 +222,7 @@ class ServiceAuth:
             ) from err
 
         creds = flow.run_local_server(port=0, access_type="offline", prompt="consent")
-        self.consented = True
+        self.consent_count += 1
         return creds
     def _grant_is_current(self):
         """
@@ -294,20 +299,19 @@ class ServiceAuth:
         than dying with a raw "invalid_grant", the stale grant is dropped and
         a fresh consent is requested, then the action is retried once.
         """
-        self.consented = False
+        before = self.consent_count
 
         try:
             return action(self.check_credentials())
         except (RefreshError, HttpError) as err:
-            if not _is_auth_failure(err) or self.consented:
+            if not _is_auth_failure(err) or self.consent_count > before:
                 # Either a genuine failure, or the grant was just renewed and
                 # this is a second, unrelated problem. Do not ask again.
                 raise
 
-            print("The Gmail grant is no longer valid, requesting new consent...")
+            print("The Gmail grant is no longer valid, asking for consent again...")
             self.invalidate_token()
             return action(self.check_credentials())
-
     def get_user_email(self):
         """Best effort lookup of the signed-in account's own address."""
         try:
