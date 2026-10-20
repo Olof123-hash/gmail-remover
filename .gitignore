@@ -4,6 +4,9 @@ token.json
 token.py
 authentication/
 
+# Local list of blocked addresses, created on first use
+blocked.json
+
 # Local experiment scratch space
 experiment_files/
 

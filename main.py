@@ -4,6 +4,7 @@ from inquirer.errors import ValidationError
 
 from functionality.block import block_user, is_valid_email, show_blocked, unblock_user
 from functionality.deletemails import delete_mail
+from SA import MissingCredentialsError
 
 
 print(r""" ___  _        __ _ ____  _____
@@ -182,6 +183,9 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print()
         sys.exit()
+    except MissingCredentialsError as err:
+        print(err)
+        sys.exit(1)
     except Exception as err:
         print(f"\nSomething went wrong: {err}")
         sys.exit(1)

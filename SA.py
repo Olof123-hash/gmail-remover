@@ -18,6 +18,29 @@ CREDENTIALS_PATH = AUTH_DIR / "credentials.json"
 
 USERINFO_URL = "https://openidconnect.googleapis.com/v1/userinfo"
 
+CREDENTIALS_HELP = """Could not find {path}
+
+This project talks to Gmail through your own Google Cloud OAuth client, so
+one has to be created before the app can run:
+
+  1. Open https://console.cloud.google.com/apis/credentials
+  2. Create a project (or pick an existing one)
+  3. Enable the Gmail API for that project
+  4. Create an OAuth client ID -> Application type: "Desktop app"
+  5. Download the JSON and save it as:
+
+     {path}
+
+Then run the app again and complete the consent in your browser."""
+
+
+class MissingCredentialsError(FileNotFoundError):
+    """Raised when the user has not supplied their own OAuth client file."""
+
+
+class InvalidCredentialsError(ValueError):
+    """Raised when the supplied OAuth client file cannot be used."""
+
 
 def _current_account():
     """Return the current user as DOMAIN\\user where that is known."""
@@ -114,7 +137,19 @@ class ServiceAuth:
 
     def _run_consent_flow(self):
         """Run the interactive OAuth flow and return fresh credentials."""
-        flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_PATH, self.SCOPES)
+        if not CREDENTIALS_PATH.exists():
+            raise MissingCredentialsError(
+                CREDENTIALS_HELP.format(path=CREDENTIALS_PATH)
+            )
+
+        try:
+            flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_PATH, self.SCOPES)
+        except ValueError as err:
+            raise InvalidCredentialsError(
+                f"{CREDENTIALS_PATH} does not look like a usable OAuth client file ({err}).\n"
+                "It has to be the JSON downloaded for a Desktop app OAuth client."
+            ) from err
+
         return flow.run_local_server(port=0, access_type="offline", prompt="consent")
 
     def _grant_is_current(self):

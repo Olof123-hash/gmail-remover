@@ -2,7 +2,7 @@ import time
 
 from googleapiclient.errors import HttpError
 
-from SA import ServiceAuth
+from SA import MissingCredentialsError, ServiceAuth
 
 BATCH_SIZE = 1000        # messages.batchModify accepts at most 1000 ids per call
 MAX_ATTEMPTS = 5
@@ -104,6 +104,9 @@ def delete_mail(senders, amount=None):
 
     try:
         service = ServiceAuth().check_credentials()
+    except MissingCredentialsError as err:
+        print(err)
+        return 0
     except Exception as err:
         print(f"Could not authenticate with Gmail: {err}")
         return 0

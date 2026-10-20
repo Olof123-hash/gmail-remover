@@ -7,7 +7,7 @@ from pathlib import Path
 from email_validator import validate_email, EmailNotValidError
 from googleapiclient.errors import HttpError
 
-from SA import ServiceAuth
+from SA import MissingCredentialsError, ServiceAuth
 
 BLOCKED_PATH = Path(__file__).resolve().parent.parent / "blocked.json"
 
@@ -101,6 +101,9 @@ def block_user(email):
 
     try:
         service = auth.check_credentials()
+    except MissingCredentialsError as err:
+        print(err)
+        return None
     except Exception as err:
         print(f"Could not authenticate with Gmail: {err}")
         return None
@@ -152,6 +155,9 @@ def unblock_user(emails=None):
 
     try:
         service = auth.check_credentials()
+    except MissingCredentialsError as err:
+        print(err)
+        return []
     except Exception as err:
         print(f"Could not authenticate with Gmail: {err}")
         return []
