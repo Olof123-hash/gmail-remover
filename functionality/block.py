@@ -1,91 +1,207 @@
-from SA import ServiceAuth
-from googleapiclient.errors import HttpError
-from email_validator import validate_email, EmailNotValidError
+import contextlib
 import json
-import inquirer
-import re
+import os
+import tempfile
+from pathlib import Path
+
+from email_validator import validate_email, EmailNotValidError
+from googleapiclient.errors import HttpError
+
+from SA import ServiceAuth
+
+BLOCKED_PATH = Path(__file__).resolve().parent.parent / "blocked.json"
 
 
 def is_valid_email(email):
+    """Return True when `email` is a syntactically valid address."""
+    if not isinstance(email, str):
+        return False
+
     try:
-        validate_email(email, check_deliverability=False)
+        validate_email(email.strip(), check_deliverability=False)
         return True
     except EmailNotValidError:
         return False
 
-def show_blocked():
 
-    with open('blocked.json', 'r', encoding='utf-8') as f:
-    
-            test = json.load(f)
-    
-            new_dict = {'emails': [entry['email'] for entry in list(test.values())[0]]} ## Gets all emails into one single dict with key : emails 
-    
-            emails = []
+def _read_store():
+    """Load the blocked address store, tolerating a missing or damaged file."""
+    if not BLOCKED_PATH.exists():
+        return {"blockedAddresses": []}
 
-            for k in new_dict['emails']:
-                 emails.append(k)
-            
-    return emails
-
-def write_data(email):
-    with open('blocked.json', 'r') as f:
+    try:
+        with BLOCKED_PATH.open("r", encoding="utf-8") as f:
             data = json.load(f)
-    
-    existing = {entry['email'] for entry in data['blockedAddresses']}
-    if email not in existing:
-            data['blockedAddresses'].append({"email": email})
-    
-    with open("blocked.json", "w") as f:
-            json.dump(data, f, indent=4)
+    except (json.JSONDecodeError, OSError):
+        print(f"Warning: {BLOCKED_PATH.name} could not be read, starting a new list.")
+        return {"blockedAddresses": []}
+
+    if not isinstance(data, dict):
+        return {"blockedAddresses": []}
+
+    entries = data.get("blockedAddresses")
+    if not isinstance(entries, list):
+        entries = []
+
+    data["blockedAddresses"] = [
+        entry for entry in entries if isinstance(entry, dict) and entry.get("email")
+    ]
+    return data
+
+
+def _write_store(data):
+    """Write the store atomically so a crash cannot truncate it."""
+    BLOCKED_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+    fd, tmp_path = tempfile.mkstemp(dir=str(BLOCKED_PATH.parent), prefix=".blocked-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=4, ensure_ascii=False)
+        os.replace(tmp_path, BLOCKED_PATH)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp_path)
+        raise
+
+
+def show_blocked():
+    """Return the list of currently blocked addresses."""
+    data = _read_store()
+    return [entry["email"] for entry in data["blockedAddresses"]]
+
+
+def write_data(email, filter_id=None):
+    """Record a blocked address together with the Gmail filter backing it."""
+    data = _read_store()
+    wanted = email.strip().lower()
+
+    for entry in data["blockedAddresses"]:
+        if entry["email"].strip().lower() == wanted:
+            if filter_id:
+                entry["filterId"] = filter_id
+            break
+    else:
+        entry = {"email": email}
+        if filter_id:
+            entry["filterId"] = filter_id
+        data["blockedAddresses"].append(entry)
+
+    _write_store(data)
+
 
 def block_user(email):
+    """Create a Gmail filter that trashes every message from `email`."""
+    email = (email or "").strip()
 
-    serviced = ServiceAuth()
-    service = serviced.check_credentials()
+    if not is_valid_email(email):
+        print("Not a valid email address")
+        return None
+
+    auth = ServiceAuth()
+
+    try:
+        service = auth.check_credentials()
+    except Exception as err:
+        print(f"Could not authenticate with Gmail: {err}")
+        return None
+
+    own_address = auth.get_user_email()
+    if own_address and email.lower() == own_address.lower():
+        print(f"{email} is your own address - blocking it would trash all of your own mail.")
+        return None
 
     filter_content = {
-                    'criteria': {
-                        'from': email
-                    },
-                    'action': {
-                        'addLabelIds': ['TRASH'],
-                        'removeLabelIds': ['INBOX', 'UNREAD'],
-                    },
-                }
-    
-    filter = (
-    service.users()
-    .settings()
-    .filters()
-    .create(
-    userId="me", body=filter_content
-    )
-    )
+        "criteria": {
+            "from": email
+        },
+        "action": {
+            'addLabelIds': ['TRASH'],
+            'removeLabelIds': ['INBOX', 'UNREAD'],
+        },
+    }
 
-  
-    if is_valid_email(email):
+    try:
+        created = service.users().settings().filters().create(userId="me", body=filter_content).execute()
+    except HttpError as error:
+        print(f"An error occurred: {error}")
+        return None
+    except Exception as err:
+        print(f"You have the following error {err}, {type(err)=} : Please try again")
+        return None
+
+    filter_id = created.get("id")
+
+    try:
+        write_data(email, filter_id)
+    except OSError as err:
+        print(f"Blocked {email}, but the local list could not be updated: {err}")
+        return filter_id
+
+    print(f"Successfully blocked {email}")
+    return filter_id
+
+
+def unblock_user(emails=None):
+    """
+    Remove the Gmail filters for the given addresses and forget them locally.
+
+    emails: the addresses to unblock, or None to unblock everything that is
+            currently recorded as blocked.
+    """
+    auth = ServiceAuth()
+
+    try:
+        service = auth.check_credentials()
+    except Exception as err:
+        print(f"Could not authenticate with Gmail: {err}")
+        return []
+
+    store = _read_store()
+    known = [entry["email"] for entry in store["blockedAddresses"]]
+
+    targets = [email.strip() for email in emails] if emails else list(known)
+    targets = [target for target in targets if target]
+    if not targets:
+        print("There is nothing to unblock")
+        return []
+
+    wanted = {target.lower() for target in targets}
+
+    # Find the filters that belong to the addresses we want to unblock.
+    filter_ids = {}
+    page_token = None
+    while True:
+        response = service.users().settings().filters().list(userId="me", pageToken=page_token).execute()
+
+        for entry in response.get("filters", []):
+            source = (entry.get("criteria", {}).get("from") or "").strip().lower()
+            if source in wanted:
+                filter_ids[source] = entry.get("id")
+
+        page_token = response.get("nextPageToken")
+        if not page_token:
+            break
+
+    removed = []
+    for address in targets:
+        filter_id = filter_ids.get(address.lower())
+        if not filter_id:
+            continue
 
         try:
-            filter.execute()
-            write_data(email)
+            service.users().settings().filters().delete(userId="me", id=filter_id).execute()
         except HttpError as error:
-            print(f"An error occurred: {error}")
-        except Exception as err:
-            print(f"You have the following error {err}, {type(err)=} : Please try again")  
-        else:
-            print(f"Successfully blocked")
-        return filter_content.get("id")
-    
-    else:
-        print("Not a valid email address")
+            print(f"Could not remove the filter for {address}: {error}")
+            continue
 
-    
-def unblock_user():
-     pass
+        removed.append(address)
 
+    removed_keys = {address.lower() for address in removed}
+    store["blockedAddresses"] = [
+        entry for entry in store["blockedAddresses"]
+        if entry["email"].strip().lower() not in removed_keys
+    ]
+    _write_store(store)
 
-
-
-
-#Store filtered emails and stuff in a JSON file.
+    print(f"Successfully unblocked {len(removed)} account(s)")
+    return removed

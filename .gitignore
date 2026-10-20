@@ -1,5 +1,12 @@
+# OAuth credentials and tokens - never commit these
 credentials.json
-token.py 
-experiment_files/
+token.json
+token.py
 authentication/
-__pycache__/    
+
+# Local experiment scratch space
+experiment_files/
+
+# Python bytecode
+__pycache__/
+*.py[cod]
