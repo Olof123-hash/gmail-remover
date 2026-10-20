@@ -1,7 +1,7 @@
 import inquirer
 import sys
 from functionality.deletemails import delete_mail
-from functionality.block import block_user
+from functionality.block import block_user, show_blocked
 
 
 print(r""" ___  _        __ _ ____  _____ 
@@ -62,8 +62,6 @@ def delete():
     else:
         sys.exit()
 # %%
-def manage_subscription():
-    pass
 
 def block_accounts():
 
@@ -75,7 +73,7 @@ def block_accounts():
         )
     ]
 
-    if inquirer.prompt(option)['options']:
+    if inquirer.prompt(option)['options'] == 'Block':
     
         account = [
             inquirer.Text(
@@ -89,17 +87,25 @@ def block_accounts():
         #Do validation here the same way with the amount of email validation that its rendered on the inquirer function so that the prompt can repeat itself
 
     else:
-            pass
+
+        questions = [
+            inquirer.Checkbox('Choose accounts to unblock',
+                            message="What are you interested in?",
+                            choices=show_blocked(),
+                            ),
+        ]
+
+        answers = inquirer.prompt(questions)
+          
 
 actions = {
     'Delete Emails': delete,
-    'Manage Subscriptions': manage_subscription,
     'Block Accounts' : block_accounts
 }
 prompt = [
     inquirer.List('options',
                   message= 'What would you like to do?', 
-                  choices= ['Delete Emails', 'Manage Subscriptions', 'Block Accounts']),
+                  choices= ['Delete Emails', 'Block Accounts']),
 ]
 
 actions[inquirer.prompt(prompt)['options']]()
