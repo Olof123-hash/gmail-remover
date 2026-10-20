@@ -7,7 +7,7 @@ from pathlib import Path
 from email_validator import validate_email, EmailNotValidError
 from googleapiclient.errors import HttpError
 
-from SA import MissingCredentialsError, ServiceAuth
+from SA import MissingCredentialsError, ServiceAuth, describe_api_error
 
 BLOCKED_PATH = Path(__file__).resolve().parent.parent / "blocked.json"
 
@@ -89,6 +89,29 @@ def write_data(email, filter_id=None):
     _write_store(data)
 
 
+def find_filters(service, wanted):
+    """
+    Return {address: [filter id, ...]} for the given addresses.
+
+    settings.filters.list returns every filter at once, it has no pageToken
+    parameter. The response uses the key "filter" (singular), not "filters".
+    """
+    response = service.users().settings().filters().list(userId="me").execute()
+
+    entries = response.get("filter")
+    if entries is None:
+        entries = response.get("filters", [])
+
+    found = {}
+    for entry in entries:
+        source = (entry.get("criteria", {}).get("from") or "").strip().lower()
+        if source in wanted:
+            # There can be several filters for the same address, for example
+            # after blocking the same sender twice.
+            found.setdefault(source, []).append(entry.get("id"))
+    return found
+
+
 def block_user(email):
     """Create a Gmail filter that trashes every message from `email`."""
     email = (email or "").strip()
@@ -113,6 +136,17 @@ def block_user(email):
         print(f"{email} is your own address - blocking it would trash all of your own mail.")
         return None
 
+    # Do not pile up duplicate filters for an address that is already blocked.
+    try:
+        existing = auth.run(lambda service: find_filters(service, {email.lower()}))
+    except Exception:
+        existing = {}
+
+    already = existing.get(email.lower())
+    if already:
+        print(f"{email} is already blocked.")
+        return already[0]
+
     filter_content = {
         "criteria": {
             "from": email
@@ -129,7 +163,7 @@ def block_user(email):
             .create(userId="me", body=filter_content).execute()
         )
     except HttpError as error:
-        print(f"An error occurred: {error}")
+        print(f"An error occurred: {describe_api_error(error)}")
         return None
     except Exception as err:
         print(f"You have the following error {err}, {type(err)=} : Please try again")
@@ -179,23 +213,11 @@ def unblock_user(emails=None):
     # Find the filters that belong to the addresses we want to unblock.
     filter_ids = {}
 
-    def find_filters(service):
-        found = {}
-        page_token = None
-        while True:
-            response = service.users().settings().filters().list(userId="me", pageToken=page_token).execute()
-
-            for entry in response.get("filters", []):
-                source = (entry.get("criteria", {}).get("from") or "").strip().lower()
-                if source in wanted:
-                    found[source] = entry.get("id")
-
-            page_token = response.get("nextPageToken")
-            if not page_token:
-                return found
+    def find_filters_for_targets(service):
+        return find_filters(service, wanted)
 
     try:
-        filter_ids = auth.run(find_filters)
+        filter_ids = auth.run(find_filters_for_targets)
     except HttpError as error:
         print(f"Could not read the Gmail filters: {error}")
         return []
@@ -205,20 +227,23 @@ def unblock_user(emails=None):
 
     removed = []
     for address in targets:
-        filter_id = filter_ids.get(address.lower())
-        if not filter_id:
+        ids = filter_ids.get(address.lower())
+        if not ids:
             continue
 
-        try:
-            auth.run(
-                lambda service: service.users().settings().filters()
-                .delete(userId="me", id=filter_id).execute()
-            )
-        except HttpError as error:
-            print(f"Could not remove the filter for {address}: {error}")
-            continue
+        failed = False
+        for filter_id in ids:
+            try:
+                auth.run(
+                    lambda service, fid=filter_id: service.users().settings().filters()
+                    .delete(userId="me", id=fid).execute()
+                )
+            except HttpError as error:
+                print(f"Could not remove the filter for {address}: {describe_api_error(error)}")
+                failed = True
 
-        removed.append(address)
+        if not failed:
+            removed.append(address)
 
     removed_keys = {address.lower() for address in removed}
     store["blockedAddresses"] = [

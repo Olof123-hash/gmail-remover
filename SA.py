@@ -86,6 +86,15 @@ def _is_auth_failure(err):
     return status in (401, 403)
 
 
+def describe_api_error(err):
+    """Pull the human readable part out of a Gmail API error."""
+    try:
+        body = json.loads(err.content.decode("utf-8", "replace"))
+        return body.get("error", {}).get("message") or str(err)
+    except Exception:
+        return str(err)
+
+
 def _current_account():
     """Return the current user as DOMAIN\\user where that is known."""
     user = os.environ.get("USERNAME") or os.environ.get("USER") or ""

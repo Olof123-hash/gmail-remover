@@ -1,8 +1,9 @@
+import json
 import time
 
 from googleapiclient.errors import HttpError
 
-from SA import TOKEN_PATH, MissingCredentialsError, ServiceAuth
+from SA import TOKEN_PATH, MissingCredentialsError, ServiceAuth, describe_api_error
 
 BATCH_SIZE = 1000        # messages.batchModify accepts at most 1000 ids per call
 MAX_ATTEMPTS = 5
@@ -130,7 +131,7 @@ def _delete_with_service(service, query, senders, amount):
             _trash_batch(service, chunk)
             deleted += len(chunk)
     except HttpError as err:
-        print(f"Trashing failed after {deleted} of {len(ids)} messages: {err}")
+        print(f"Trashing failed after {deleted} of {len(ids)} messages: {describe_api_error(err)}")
         print("Run the command again to continue with the remaining messages.")
         return deleted
     except Exception as err:
