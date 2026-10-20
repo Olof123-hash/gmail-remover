@@ -11,6 +11,7 @@ from google.auth.transport.requests import AuthorizedSession, Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 
 AUTH_DIR = Path(__file__).resolve().parent / "authentication"
 CREDENTIALS_PATH = AUTH_DIR / "credentials.json"
@@ -68,6 +69,15 @@ class InvalidCredentialsError(ValueError):
     """Raised when the supplied OAuth client file cannot be used."""
 
 
+def _is_auth_failure(err):
+    """True when the error means the stored grant is no longer usable."""
+    if isinstance(err, RefreshError):
+        return True
+
+    status = getattr(getattr(err, "resp", None), "status", None)
+    return status in (401, 403)
+
+
 def _current_account():
     """Return the current user as DOMAIN\\user where that is known."""
     user = os.environ.get("USERNAME") or os.environ.get("USER") or ""
@@ -123,9 +133,14 @@ class ServiceAuth:
         "https://www.googleapis.com/auth/userinfo.email",
     ]
 
+    def __init__(self):
+        # Set when a consent flow ran, so we never ask twice in a row.
+        self.consented = False
+
     def get_credentials(self):
         """Return valid credentials, running the OAuth flow when needed."""
         creds = None
+        self.consented = False
 
         if TOKEN_PATH.exists():
             if self._grant_is_current():
@@ -201,8 +216,9 @@ class ServiceAuth:
                 "It has to be the JSON downloaded for a Desktop app OAuth client."
             ) from err
 
-        return flow.run_local_server(port=0, access_type="offline", prompt="consent")
-
+        creds = flow.run_local_server(port=0, access_type="offline", prompt="consent")
+        self.consented = True
+        return creds
     def _grant_is_current(self):
         """
         Check that the stored token was granted exactly the scopes we want.
@@ -263,6 +279,34 @@ class ServiceAuth:
     def check_credentials(self):
         """Return an authorised Gmail API client."""
         return build("gmail", "v1", credentials=self.get_credentials())
+
+    def invalidate_token(self):
+        """Forget the stored grant."""
+        with contextlib.suppress(OSError):
+            TOKEN_PATH.unlink()
+
+    def run(self, action):
+        """
+        Run an API action, asking for a new consent if the grant went stale.
+
+        A stored access token can stop working between runs (the grant was
+        revoked, the password changed, the scopes no longer line up). Rather
+        than dying with a raw "invalid_grant", the stale grant is dropped and
+        a fresh consent is requested, then the action is retried once.
+        """
+        self.consented = False
+
+        try:
+            return action(self.check_credentials())
+        except (RefreshError, HttpError) as err:
+            if not _is_auth_failure(err) or self.consented:
+                # Either a genuine failure, or the grant was just renewed and
+                # this is a second, unrelated problem. Do not ask again.
+                raise
+
+            print("The Gmail grant is no longer valid, requesting new consent...")
+            self.invalidate_token()
+            return action(self.check_credentials())
 
     def get_user_email(self):
         """Best effort lookup of the signed-in account's own address."""

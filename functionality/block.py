@@ -100,7 +100,7 @@ def block_user(email):
     auth = ServiceAuth()
 
     try:
-        service = auth.check_credentials()
+        auth.check_credentials()
     except MissingCredentialsError as err:
         print(err)
         return None
@@ -124,7 +124,10 @@ def block_user(email):
     }
 
     try:
-        created = service.users().settings().filters().create(userId="me", body=filter_content).execute()
+        created = auth.run(
+            lambda service: service.users().settings().filters()
+            .create(userId="me", body=filter_content).execute()
+        )
     except HttpError as error:
         print(f"An error occurred: {error}")
         return None
@@ -154,7 +157,7 @@ def unblock_user(emails=None):
     auth = ServiceAuth()
 
     try:
-        service = auth.check_credentials()
+        auth.check_credentials()
     except MissingCredentialsError as err:
         print(err)
         return []
@@ -175,18 +178,30 @@ def unblock_user(emails=None):
 
     # Find the filters that belong to the addresses we want to unblock.
     filter_ids = {}
-    page_token = None
-    while True:
-        response = service.users().settings().filters().list(userId="me", pageToken=page_token).execute()
 
-        for entry in response.get("filters", []):
-            source = (entry.get("criteria", {}).get("from") or "").strip().lower()
-            if source in wanted:
-                filter_ids[source] = entry.get("id")
+    def find_filters(service):
+        found = {}
+        page_token = None
+        while True:
+            response = service.users().settings().filters().list(userId="me", pageToken=page_token).execute()
 
-        page_token = response.get("nextPageToken")
-        if not page_token:
-            break
+            for entry in response.get("filters", []):
+                source = (entry.get("criteria", {}).get("from") or "").strip().lower()
+                if source in wanted:
+                    found[source] = entry.get("id")
+
+            page_token = response.get("nextPageToken")
+            if not page_token:
+                return found
+
+    try:
+        filter_ids = auth.run(find_filters)
+    except HttpError as error:
+        print(f"Could not read the Gmail filters: {error}")
+        return []
+    except Exception as err:
+        print(f"Could not authenticate with Gmail: {err}")
+        return []
 
     removed = []
     for address in targets:
@@ -195,7 +210,10 @@ def unblock_user(emails=None):
             continue
 
         try:
-            service.users().settings().filters().delete(userId="me", id=filter_id).execute()
+            auth.run(
+                lambda service: service.users().settings().filters()
+                .delete(userId="me", id=filter_id).execute()
+            )
         except HttpError as error:
             print(f"Could not remove the filter for {address}: {error}")
             continue

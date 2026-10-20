@@ -102,8 +102,10 @@ def delete_mail(senders, amount=None):
 
     query = build_query(senders)
 
+    auth = ServiceAuth()
+
     try:
-        service = ServiceAuth().check_credentials()
+        return auth.run(lambda service: _delete_with_service(service, query, senders, amount))
     except MissingCredentialsError as err:
         print(err)
         return 0
@@ -112,6 +114,9 @@ def delete_mail(senders, amount=None):
         print(f"The token is stored at {TOKEN_PATH}")
         return 0
 
+
+def _delete_with_service(service, query, senders, amount):
+    """Find the matching messages and move them to the trash."""
     ids = collect_message_ids(service, query, amount)
 
     if not ids:
